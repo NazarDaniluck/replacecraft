@@ -6,6 +6,8 @@
 [![OpenGL](https://img.shields.io/badge/OpenGL-1.1-green.svg)](https://www.opengl.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+(screenshots/home.png)
+
 ---
 
 ## Особенности
