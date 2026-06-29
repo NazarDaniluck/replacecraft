@@ -80,10 +80,9 @@
 3. Распакуйте файлы `lwjgl.jar`, `lwjgl_util.jar` и нативные библиотеки в папку `libs/`.
 4. Откройте проект в среде разработки Eclipse.
 5. Добавьте `libs/*.jar` в путь сборки (Build Path).
-6. Укажите аргумент `-Djava.library.path=libs/native/windows` в конфигурации запуска (Run Configuration).
 
 ### Запуск клиента через консоль
 ```bat
-java -Djava.library.path="libs/native/windows" -jar ReplaceCraft.jar
+java -Djava.library.path="libs/native/windows" -jar rc-0.1.jar
 ```
 
