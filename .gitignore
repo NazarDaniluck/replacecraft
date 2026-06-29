@@ -1,12 +1,6 @@
 # Compiled
 /bin/
 
-# Libraries
-/libs/*.jar
-/libs/*.dll
-/libs/*.so
-/libs/*.dylib
-
 # Eclipse
 .classpath
 .project
@@ -20,3 +14,6 @@
 
 # Settings
 client_settings.ini
+
+# Screenshots
+screenshot/
