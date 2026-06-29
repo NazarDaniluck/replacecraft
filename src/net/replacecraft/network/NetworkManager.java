@@ -2,6 +2,8 @@ package net.replacecraft.network;
 
 import java.io.*;
 import java.net.*;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class NetworkManager {
     private Socket socket;
@@ -10,29 +12,46 @@ public class NetworkManager {
     private boolean connected;
     private Thread listenerThread;
     private PacketHandler packetHandler;
+    private Queue<byte[]> sendQueue = new ConcurrentLinkedQueue<>();
+    private Thread sendThread;
 
     public NetworkManager() {
         this.connected = false;
-        // PacketHandler устанавливается через setPacketHandler
     }
 
-    /** Установить обработчик пакетов */
     public void setPacketHandler(PacketHandler handler) {
         this.packetHandler = handler;
     }
 
     public void connect(String host, int port, String username, String mppass) throws IOException {
-       if (this.socket != null && !this.socket.isClosed()) {
+        if (this.socket != null && !this.socket.isClosed()) {
             try { this.socket.close(); } catch (IOException e) {}
         }
-       this.socket = new Socket(host, port);
+
+        this.socket = new Socket(host, port);
         socket.setTcpNoDelay(true);
 
-        input = new DataInputStream(socket.getInputStream());
-        output = new DataOutputStream(socket.getOutputStream());
+        input = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+        output = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
 
         connected = true;
         System.out.println("Connected to " + host + ":" + port);
+
+        // Поток отправки
+        sendThread = new Thread(() -> {
+            while (connected) {
+                try {
+                    byte[] data;
+                    while ((data = sendQueue.poll()) != null) {
+                        output.write(data);
+                    }
+                    output.flush();
+                    Thread.sleep(10);
+                } catch (Exception e) { break; }
+            }
+        }, "Send-Client");
+        sendThread.setDaemon(true);
+        sendThread.start();
 
         // Отправляем идентификацию
         ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
@@ -42,22 +61,17 @@ public class NetworkManager {
         writeString64(dataOut, username);
         writeString64(dataOut, mppass.isEmpty() ? "-" : mppass);
         dataOut.writeByte(0x00);
-        output.write(byteOut.toByteArray());
-        output.flush();
+        sendRaw(byteOut.toByteArray());
 
         System.out.println("Sent identification: " + username);
 
-        if (packetHandler == null) {
-            System.err.println("FATAL: packetHandler is null!");
-            return;
-        }
-        
         // Ждём первый ответ синхронно
         System.out.println("Waiting for server response...");
         int firstPacketId = input.readUnsignedByte();
         System.out.println("Received first packet: 0x" + Integer.toHexString(firstPacketId));
-        System.out.println("packetHandler=" + packetHandler);
-        packetHandler.handlePacket(firstPacketId, input);
+        if (packetHandler != null) {
+            packetHandler.handlePacket(firstPacketId, input);
+        }
 
         // Запускаем слушатель
         startListening();
@@ -102,10 +116,7 @@ public class NetworkManager {
 
     private void sendRaw(byte[] data) throws IOException {
         if (!connected || socket.isClosed()) return;
-        synchronized (output) {
-            output.write(data);
-            output.flush();
-        }
+        sendQueue.add(data);
     }
 
     private void startListening() {
@@ -113,7 +124,9 @@ public class NetworkManager {
             try {
                 while (connected && !socket.isClosed()) {
                     int packetId = input.readUnsignedByte();
-                    packetHandler.handlePacket(packetId, input);
+                    if (packetHandler != null) {
+                        packetHandler.handlePacket(packetId, input);
+                    }
                 }
             } catch (EOFException e) {
                 System.out.println("Server closed connection.");
@@ -131,7 +144,6 @@ public class NetworkManager {
     }
 
     public void disconnect() {
-        if (!connected) return; // <-- Добавь эту строку
         connected = false;
         try {
             if (socket != null && !socket.isClosed()) socket.close();
@@ -143,7 +155,6 @@ public class NetworkManager {
         return connected && socket != null && !socket.isClosed();
     }
 
-    // --- Утилиты ---
     private void writeString64(DataOutputStream out, String str) throws IOException {
         byte[] bytes = str.getBytes("UTF-8");
         byte[] data = new byte[64];

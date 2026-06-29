@@ -3,6 +3,7 @@ package net.replacecraft;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import javax.imageio.ImageIO;
@@ -14,20 +15,34 @@ public class Font {
 
     public Font(String filename) {
         try {
-            File file = new File(filename);
-            if (!file.exists()) {
-                System.out.println("КРИТИЧЕСКАЯ ОШИБКА: Шрифт " + filename + " не найден в корне!");
+            InputStream is = Font.class.getResourceAsStream("/textures/" + filename);
+            
+            if (is == null) {
+                File f = new File(filename);
+                if (f.exists()) {
+                    is = new FileInputStream(f);
+                } else {
+                    f = new File("res/textures/" + filename);
+                    if (f.exists()) {
+                        is = new FileInputStream(f);
+                    }
+                }
+            }
+            
+            if (is == null) {
+                System.out.println("ERROR: Font " + filename + " not found!");
                 return;
             }
 
-            BufferedImage image = ImageIO.read(new FileInputStream(file));
+            BufferedImage image = ImageIO.read(is);
+            is.close();
+            
             int w = image.getWidth();
             int h = image.getHeight();
             int[] rawPixels = new int[w * h];
             image.getRGB(0, 0, w, h, rawPixels, 0, w);
 
-            // Автоматический расчет ширины букв по пикселям (алгоритм Нотча)
-            for (int i = 0; i < 128; ++i) {
+            for (int i = 0; i < 256; ++i) {
                 int xt = i % 16;
                 int yt = i / 16;
                 int x = 0;
@@ -42,11 +57,10 @@ public class Font {
                         }
                     }
                 }
-                if (i == 32) x = 4; // Пробел
+                if (i == 32) x = 4;
                 this.charWidths[i] = x;
             }
 
-            // Загрузка текстуры шрифта в OpenGL
             ByteBuffer buffer = ByteBuffer.allocateDirect(w * h * 4).order(ByteOrder.nativeOrder());
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
@@ -70,26 +84,32 @@ public class Font {
         }
     }
 
+    private static int mapChar(char c) {
+        if (c < 256) return c;
+        if (c >= 'А' && c <= 'Я') return (c - 'А') + 128;
+        if (c == 'Ё') return 240;
+        if (c >= 'а' && c <= 'я') return (c - 'а') + 192;
+        if (c == 'ё') return 241;
+        return 32;
+    }
+
     public void drawShadow(String str, int x, int y, int color) {
-        // Тень (затемненный цвет, смещенный на 1 пиксель)
         int r = (color >> 16 & 255) / 4;
         int g = (color >> 8 & 255) / 4;
         int b = (color & 255) / 4;
         int shadowColor = (r << 16) | (g << 8) | b;
-
         this.draw(str, x + 1, y + 1, shadowColor);
         this.draw(str, x, y, color);
     }
 
     public void draw(String str, int x, int y, int color) {
         char[] chars = str.toCharArray();
-        
+
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.fontTexture);
 
-        // Раскладываем цвет на составляющие для glColor
         float r = (float) (color >> 16 & 255) / 255.0f;
         float g = (float) (color >> 8 & 255) / 255.0f;
         float b = (float) (color & 255) / 255.0f;
@@ -98,10 +118,9 @@ public class Font {
         GL11.glBegin(GL11.GL_QUADS);
         int xo = 0;
         for (int i = 0; i < chars.length; ++i) {
-            if (chars[i] >= 256) continue;
-            
-            int ix = chars[i] % 16 * 8;
-            int iy = chars[i] / 16 * 8;
+            int code = mapChar(chars[i]);
+            int ix = code % 16 * 8;
+            int iy = code / 16 * 8;
 
             float u0 = (float) ix / 128.0f;
             float v0 = (float) iy / 128.0f;
@@ -118,10 +137,10 @@ public class Font {
             GL11.glTexCoord2f(u1, v1); GL11.glVertex2f(x1, y1);
             GL11.glTexCoord2f(u1, v0); GL11.glVertex2f(x1, y0);
 
-            xo += this.charWidths[chars[i]];
+            xo += this.charWidths[code];
         }
         GL11.glEnd();
-        
+
         GL11.glDisable(GL11.GL_BLEND);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
     }

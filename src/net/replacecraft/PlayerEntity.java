@@ -25,9 +25,9 @@ public class PlayerEntity {
         GL11.glPushMatrix();
         GL11.glTranslatef(x, y, z);
 
-        float w = 0.5f;
-        float h = 1.7f;
-        float d = 0.5f;
+        float w = 0.3f;
+        float h = 1.5f;
+        float d = 0.3f;
 
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glColor4f(0.5f, 0.5f, 0.5f, 0.8f);
@@ -57,7 +57,7 @@ public class PlayerEntity {
             GL11.glRotatef(-playerYaw, 0.0f, 1.0f, 0.0f);
             float scale = 0.02f;
             GL11.glScalef(scale, scale, scale);
-            GL11.glTranslatef(0, h / scale + 5, 0);
+            GL11.glTranslatef(0, h / scale + 10, 0);
             font.drawShadow(name, -name.length() * 4, 0, 0xFFFFFF);
             GL11.glPopMatrix();
         }
