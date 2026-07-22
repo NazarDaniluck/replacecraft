@@ -20,7 +20,7 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     private int width = 854;
     private int height = 480;
     private boolean fullscreen = false;
-
+    
     private BlockInventory blockInventory;
     private SettingsMenu settingsMenu;
     private Chat chat;
@@ -39,12 +39,19 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     private long lastFpsTime = 0;
     private String fpsDisplayString = "0 fps, 256 chunk updates";
 
+    private TabMenu tabMenu;
+    private long lastPingTime = 0;
+    private long ping = 0;
+    private String serverMotd = "";
     private NetworkManager network;
     private PacketHandler packetHandler;
+    private boolean isOp = false;
     private boolean isMultiplayer = false;
     private String serverIp = "";
     private int serverPort = 25565;
-
+    private String playerName = "Player";
+    private String serverName = "";
+    
     private float blockRotation = 0.0f;
 
     private boolean showDebugMenu = false;
@@ -74,7 +81,9 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         Keyboard.create();
         Mouse.create();
         Mouse.setGrabbed(true);
-
+        
+        this.playerName = UsernameDialog.askUsername();
+        
         network = new NetworkManager();
         packetHandler = new PacketHandler(network);
         packetHandler.setNetworkListener(this);
@@ -86,21 +95,31 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         this.particleEngine = new ParticleEngine(level);
         this.minecraftFont = new Font("default.png");
         chat = new Chat(minecraftFont);
+        tabMenu = new TabMenu(minecraftFont);
+        
+        isMultiplayer = false;
+        isOp = true;
         
         blockInventory = new BlockInventory(minecraftFont);
-        settingsMenu = new SettingsMenu(minecraftFont);
+        settingsMenu = new SettingsMenu(minecraftFont, this);
 
-        serverGui = new ServerConnectGUI(minecraftFont);
+     // В ReplaceCraft.init():
+        serverGui = new ServerConnectGUI(minecraftFont, playerName);
         serverGui.setCallback((ip, port, name) -> connectToClassicServer(ip, port, name));
         charTextureID = Texture.loadTexture("char.png");
         GameLogger.log("Char texture ID: " + charTextureID);
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glShadeModel(GL11.GL_FLAT);
-        GL11.glClearColor(0.5f, 0.8f, 1.0f, 1.0f);
         GL11.glEnable(GL11.GL_DEPTH_TEST);
         GL11.glDepthFunc(GL11.GL_LEQUAL);
         GL11.glEnable(GL11.GL_CULL_FACE);
-
+     // Discord RPC (необязательно, если Discord не запущен — ничего не будет)
+        try {
+            DiscordRPC.start();
+        } catch (Exception e) {
+            // Discord не доступен
+        }
+        
         lastFpsTime = System.currentTimeMillis();
         GameLogger.log("Client ready");
     }
@@ -108,10 +127,22 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     public void connectToClassicServer(String ip, int port, String username) {
         this.serverIp = ip;
         this.serverPort = port;
+        
+        // Используем сохранённый ник если не передан
+        if (username == null || username.isEmpty()) {
+            username = this.playerName;
+        }
+        
+        final String finalUsername = username;
+        
+        // Сбрасываем читы
+        player.flyMode = false;
+        player.noClipMode = false;
+        
         new Thread(() -> {
             try {
                 GameLogger.log("Connecting to " + ip + ":" + port + " ...");
-                network.connect(ip, port, username, "");
+                network.connect(ip, port, finalUsername, "");
                 isMultiplayer = true;
             } catch (IOException e) {
                 GameLogger.log("Failed to connect: " + e.getMessage());
@@ -133,7 +164,7 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         long lastTime = System.nanoTime();
         double nsPerTick = 1000000000.0 / 60.0;
         double delta = 0;
-        int fpsLimit = 120;
+        int fpsLimit = 0;
 
         while (running) {
             if (Display.isCloseRequested()) running = false;
@@ -180,23 +211,38 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     }
 
     public void tick() {
-    	// Обработка чата (не блокирует игру!)
+        if (needsRenderUpdate && pendingLevel != null && !isMultiplayer) {
+            // Применяем новый уровень сразу, не ждём render()
+        	tabMenu.update();
+        	this.level = pendingLevel;
+            this.renderer = new Renderer(pendingLevel, player);
+            this.player.setLevel(pendingLevel);
+            this.player.setPosition(level.width / 2f, level.height / 2f + 2, level.depth / 2f);
+            if (particleEngine != null) {
+                particleEngine = new ParticleEngine(pendingLevel);
+            }
+            pendingLevel = null;
+            needsRenderUpdate = false;
+            GameLogger.log("=== LEVEL APPLIED IN TICK ===");
+        }
+    	// Обработка чата
     	if (chat.isOpen()) {
     	    chat.handleInput();
     	    if (!chat.isOpen()) {
-    	        // Отправка при закрытии (Enter)
     	        String msg = chat.getInput();
     	        if (!msg.isEmpty()) {
-    	            chat.addMessage("You: " + msg);
     	            if (isMultiplayer && network.isConnected()) {
-    	                try { network.sendMessage(msg); } catch (IOException e) {}
+    	                // В мультиплеере НЕ добавляем "You:", сервер вернёт с ником
+    	                network.sendMessage(msg);
+    	            } else {
+    	                // В одиночной игре добавляем "You:"
+    	                chat.addMessage("You: " + msg);
     	            }
     	            chat.clearLastSent();
     	        }
-    	    // НЕ ВЫХОДИМ — игра продолжается!
+    	    }
+    	    return;
     	}
-            return;
-        }
         
         if (serverGui != null && serverGui.isVisible()) {
             serverGui.handleInput();
@@ -205,6 +251,20 @@ public class ReplaceCraft implements Runnable, NetworkListener {
                 guiOpen = false;
             }
             return;
+        }
+        
+        if (tabMenu != null) {
+            tabMenu.update();
+            if (isMultiplayer) {
+                tabMenu.setServerInfo(serverName, serverMotd);
+                tabMenu.setMaxPlayers(16);
+                tabMenu.updatePlayers(remotePlayers, ping, isOp);
+            }
+        }
+        
+     // В конце tick(), после отправки позиции:
+        for (PlayerEntity entity : remotePlayers.values()) {
+            entity.updateAnimation();
         }
         
         // Меню настроек
@@ -225,7 +285,6 @@ public class ReplaceCraft implements Runnable, NetworkListener {
                         blockInventory.hide();
                         Mouse.setGrabbed(true);
                     }
-                    // Переключение слотов в инвентаре
                     if (key == Keyboard.KEY_1) blockInventory.setSelectedSlot(0);
                     if (key == Keyboard.KEY_2) blockInventory.setSelectedSlot(1);
                     if (key == Keyboard.KEY_3) blockInventory.setSelectedSlot(2);
@@ -240,39 +299,50 @@ public class ReplaceCraft implements Runnable, NetworkListener {
             if (wheel < 0) blockInventory.prevSlot();
         }
         
-
-        // Основной ввод
+        // Основной ввод с клавиатуры
         while (Keyboard.next()) {
             if (Keyboard.getEventKeyState()) {
                 int key = Keyboard.getEventKey();
 
-            	// Чат
-            	if (key == Keyboard.KEY_T) {
-            	    chat.openChat();
-            	}
+                if (key == Keyboard.KEY_T) {
+                    chat.openChat();
+                }
                 
                 if (key == Keyboard.KEY_ESCAPE) Mouse.setGrabbed(!Mouse.isGrabbed());
                 if (key == Keyboard.KEY_GRAVE) showDebugMenu = !showDebugMenu;
 
-                // Инвентарь
                 if (key == Keyboard.KEY_E) {
                     blockInventory.toggle();
-//                    Mouse.setGrabbed(!blockInventory.isVisible());
                 }
 
-                // Настройки
                 if (key == Keyboard.KEY_F4) {
                     settingsMenu.toggle();
                     Mouse.setGrabbed(!settingsMenu.isVisible());
                 }
-
-                // Чат
+                
+                if (key == Keyboard.KEY_F) {
+                    float mx = player.x + (float)Math.sin(Math.toRadians(player.yRot)) * 2;
+                    float mz = player.z - (float)Math.cos(Math.toRadians(player.yRot)) * 2;
+                    float my = player.y;
+                    
+                    for (int ty = level.height - 1; ty > 0; ty--) {
+                        if (level.getBlock((int)mx, ty, (int)mz) != 0) {
+                            my = ty + 2;
+                            break;
+                        }
+                    }
+                    
+                    Mob mob = new Mob(level, mx, my, mz);
+                    mob.setTexture(charTextureID);
+                    mobs.add(mob);
+                    GameLogger.log("Mob spawned!");
+                }
+                
                 if (key == Keyboard.KEY_T) {
                     chat.openChat();
                     Mouse.setGrabbed(false);
                 }
                 
-                // Слоты 1-7
                 if (key == Keyboard.KEY_1) blockInventory.setSelectedSlot(0);
                 if (key == Keyboard.KEY_2) blockInventory.setSelectedSlot(1);
                 if (key == Keyboard.KEY_3) blockInventory.setSelectedSlot(2);
@@ -281,66 +351,72 @@ public class ReplaceCraft implements Runnable, NetworkListener {
                 if (key == Keyboard.KEY_6) blockInventory.setSelectedSlot(5);
                 if (key == Keyboard.KEY_7) blockInventory.setSelectedSlot(6);
                 if (key == Keyboard.KEY_8) blockInventory.setSelectedSlot(7);
-                // Колёсико мыши
+                if (key == Keyboard.KEY_9) blockInventory.setSelectedSlot(8);
+
                 int wheel = Mouse.getDWheel();
                 if (wheel > 0) blockInventory.nextSlot();
                 if (wheel < 0) blockInventory.prevSlot();
 
-                // Debug-меню
                 if (showDebugMenu) {
-                    if (key == Keyboard.KEY_F1) player.flyMode = !player.flyMode;
-                    if (key == Keyboard.KEY_F2) player.noClipMode = !player.noClipMode;
+                    if (!isMultiplayer) {
+                    if (key == Keyboard.KEY_F1) if (isOp) player.flyMode = !player.flyMode;
+                    if (key == Keyboard.KEY_F2) if (isOp) player.noClipMode = !player.noClipMode;
+                    }
                     if (key == Keyboard.KEY_F3) toggleFullscreen();
-                    if (key == Keyboard.KEY_F5) WorldIO.saveWorld(level);
-                    if (key == Keyboard.KEY_F9) { if (WorldIO.loadWorld(level)) renderer.allChunksChanged(); }
+                    if (key == Keyboard.KEY_F5) if (isOp) WorldIO.saveWorld(level);
+                {
+                    if (key == Keyboard.KEY_F9) if (isOp) { if (WorldIO.loadWorld(level)) renderer.allChunksChanged(); }
                     if (key == Keyboard.KEY_F10) {
                         if (serverGui.isVisible()) { serverGui.hide(); Mouse.setGrabbed(true); guiOpen = false; }
                         else { serverGui.show(); Mouse.setGrabbed(false); guiOpen = true; }
                     }
-                    if (key == Keyboard.KEY_F7) {
-                        if (!mobsSpawned) {
-                            spawnMobs();
-                            mobsSpawned = true;
-                            GameLogger.log("Mobs spawned!");
-                        } else {
-                            // Убрать мобов
-                            mobs.clear();
-                            mobsSpawned = false;
-                            GameLogger.log("Mobs removed!");
-                        }
-                    }
-                    if (key == Keyboard.KEY_F11) {
-                        network.disconnect();
-                        isMultiplayer = false;
-                        remotePlayers.clear();
-                        showDisconnectMessage("Disconnected from server");
-                    }
+                }
+                if (key == Keyboard.KEY_F11) {
+                    System.exit(0);
+                }
                 }
             }
-        }
-
+}
         // Мышь (разрушение/установка)
         while (Mouse.next()) {
-            if (Mouse.isGrabbed() && !showDebugMenu) {
+            if (Mouse.isGrabbed() && !showDebugMenu && !blockInventory.isVisible()) {
+                // ЛКМ — разрушить блок
                 if (Mouse.getEventButton() == 0 && Mouse.getEventButtonState()) {
                     Player.HitResult hit = player.rayTrace(5.0F);
                     if (hit != null) {
                         particleEngine.spawnBlockParticles(hit.x, hit.y, hit.z, level.getBlock(hit.x, hit.y, hit.z));
                         level.setBlock(hit.x, hit.y, hit.z, 0);
                         if (isMultiplayer && network.isConnected()) {
-                            try { network.sendSetBlock(hit.x, hit.y, hit.z, (byte) 0x01, (byte) 0); }
-                            catch (IOException e) {}
+                            network.sendSetBlock(hit.x, hit.y, hit.z, (byte) 0x01, (byte) 0);
                         }
                     }
                 }
+                // ПКМ — поставить блок
                 if (Mouse.getEventButton() == 1 && Mouse.getEventButtonState()) {
                     Player.HitResult hit2 = player.rayTrace(5.0F);
                     if (hit2 != null) {
                         int blockToPlace = blockInventory.getSelectedBlock();
-                        level.setBlock(hit2.faceX, hit2.faceY, hit2.faceZ, blockToPlace);
-                        if (isMultiplayer && network.isConnected()) {
-                            try { network.sendSetBlock(hit2.faceX, hit2.faceY, hit2.faceZ, (byte) 0x00, (byte) blockToPlace); }
-                            catch (IOException e) {}
+                        int placeX = hit2.faceX;
+                        int placeY = hit2.faceY;
+                        int placeZ = hit2.faceZ;
+                        
+                        int px = (int) Math.floor(player.x);
+                        int py = (int) Math.floor(player.y - 0.01f);
+                        int pz = (int) Math.floor(player.z);
+                        
+                        if (placeX == px && placeZ == pz && placeY >= py - 1 && placeY <= py + 2) {
+                            level.setBlock(placeX, placeY, placeZ, blockToPlace);
+                            player.y = placeY + 1.8f;
+                            player.yo = player.y;
+                            player.yd = 0;
+                            if (isMultiplayer && network.isConnected()) {
+                                network.sendSetBlock(placeX, placeY, placeZ, (byte) 0x00, (byte) blockToPlace);
+                            }
+                        } else {
+                            level.setBlock(placeX, placeY, placeZ, blockToPlace);
+                            if (isMultiplayer && network.isConnected()) {
+                                network.sendSetBlock(placeX, placeY, placeZ, (byte) 0x00, (byte) blockToPlace);
+                            }
                         }
                     }
                 }
@@ -354,16 +430,19 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         }
         if (particleEngine != null) particleEngine.tick();
         blockRotation += 1.5f;
-
+     // Отправляем пинг каждый 3 секунды
+        if (isMultiplayer && network.isConnected()) {
+            long now = System.currentTimeMillis();
+            if (now - lastPingTime > 3000) {
+                lastPingTime = now;
+                ping = System.currentTimeMillis() - lastPingTime;
+            }
+        }
         if (isMultiplayer && network.isConnected()) {
             long now = System.currentTimeMillis();
             if (now - levelLoadTime > 2000 && now - lastPositionSend > 200) {
                 lastPositionSend = now;
-                try {
-                    network.sendPlayerPosition(player.x, player.y, player.z, player.yRot, player.xRot);
-                } catch (IOException e) {
-                    GameLogger.log("ERROR sending position: " + e.getMessage());
-                }
+                network.sendPlayerPosition(player.x, player.y, player.z, player.yRot, player.xRot);
             }
         }
     }
@@ -417,10 +496,21 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     @Override
     public void onLevelReceived(int width, int height, int depth, byte[] blocks) {
         GameLogger.log("=== LEVEL RECEIVED ===");
+        
+        // СОЗДАЁМ УРОВЕНЬ БЕЗ ГЕНЕРАЦИИ (false = не генерировать)
         Level newLevel = new Level(width, height, depth, false);
-        System.arraycopy(blocks, 0, newLevel.getBlocks(), 0, Math.min(blocks.length, newLevel.getBlocks().length));
+        
+        // Копируем блоки
+        System.arraycopy(blocks, 0, newLevel.getBlocks(), 0, 
+            Math.min(blocks.length, newLevel.getBlocks().length));
+        
+        // НЕ ВЫЗЫВАЕМ generateMap() !
+        
         this.pendingLevel = newLevel;
         this.needsRenderUpdate = true;
+        
+        isMultiplayer = true;
+        isOp = false;
         GameLogger.log("=== LEVEL PENDING ===");
     }
 
@@ -434,7 +524,35 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         remotePlayers.put(playerId, new PlayerEntity(playerId, name, x, y, z,
                 (yaw & 0xFF) * 360.0f / 256.0f, (pitch & 0xFF) * 360.0f / 256.0f));
     }
+    
+    @Override
+    public void onOpStatusReceived(boolean isOp) {
+        this.isOp = isOp;
+        System.out.println("[Client] OP status: " + isOp);
+    }
+    
+    @Override
+    public void onFlyToggle() {
+        if (player != null) {
+            player.flyMode = !player.flyMode;
+            System.out.println("[Client] Fly: " + player.flyMode);
+        }
+    }
 
+    @Override
+    public void onNoClipToggle() {
+        if (player != null) {
+            player.noClipMode = !player.noClipMode;
+            System.out.println("[Client] NoClip: " + player.noClipMode);
+        }
+    }
+    
+    @Override
+    public void onServerIdentified(String name, String motd) {
+        this.serverName = name;
+        this.serverMotd = motd;
+    }
+    
     @Override
     public void onPlayerDespawned(byte playerId) {
         remotePlayers.remove(playerId);
@@ -463,27 +581,73 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     public void onMessageReceived(byte playerId, String message) {
         GameLogger.log("[Chat] " + message);
         if (chat != null) {
-        	chat.addMessage("You: " + Font.transliterate(msg));
+            chat.addMessage(message);
         }
     }
 
     @Override
     public void onDisconnected(String reason) {
-        GameLogger.log("Disconnected: " + reason);
-        isMultiplayer = false;
-        remotePlayers.clear();
-        mobs.clear();
-        showDisconnectMessage(reason);
-
-        this.level = new Level(256, 64, 256, true);
-        this.player.setLevel(this.level);
-        this.renderer.setLevel(this.level);
-        this.particleEngine.setLevel(this.level);
-        this.player.setPosition(level.width / 2f, level.height / 2f + 2, level.depth / 2f);
+        System.out.println("=== DISCONNECTED: " + reason + " ===");
+        System.exit(0);
     }
 
     // ===== Render =====
 
+    private void renderDebugMenu() {
+        if (!showDebugMenu) return;
+        
+        int dw = Display.getWidth();
+        int dh = Display.getHeight();
+        
+        int menuW = 300;
+        int menuH = 200;
+        int mx = 5;
+        int my = 30;
+        
+        // Затемнённый фон
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        
+        GL11.glColor4f(0.0f, 0.0f, 0.0f, 0.7f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(mx, my);
+        GL11.glVertex2f(mx + menuW, my);
+        GL11.glVertex2f(mx + menuW, my + menuH);
+        GL11.glVertex2f(mx, my + menuH);
+        GL11.glEnd();
+        
+        // Рамка
+        GL11.glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+        GL11.glLineWidth(1.5f);
+        GL11.glBegin(GL11.GL_LINE_LOOP);
+        GL11.glVertex2f(mx, my);
+        GL11.glVertex2f(mx + menuW, my);
+        GL11.glVertex2f(mx + menuW, my + menuH);
+        GL11.glVertex2f(mx, my + menuH);
+        GL11.glEnd();
+        
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_BLEND);
+        
+        if (minecraftFont == null) return;
+        
+        int x = mx + 8;
+        int y = my + 6;
+        int lineH = 16;
+        
+        minecraftFont.drawShadow("=== DEBUG ===", x, y, 0xFFFF00); y += lineH;
+        minecraftFont.drawShadow("[F1] Fly: " + (player.flyMode ? "ON" : "OFF"), x, y, 0x00FF00); y += lineH;
+        minecraftFont.drawShadow("[F2] NoClip: " + (player.noClipMode ? "ON" : "OFF"), x, y, 0x00FF00); y += lineH;
+        minecraftFont.drawShadow("[F3] Fullscreen: " + (fullscreen ? "ON" : "OFF"), x, y, 0x00FF00); y += lineH;
+        minecraftFont.drawShadow("[F5] Save", x, y, 0x00FFFF); y += lineH;
+        minecraftFont.drawShadow("[F9] Load", x, y, 0x00FFFF); y += lineH;
+        minecraftFont.drawShadow("[F10] Connect", x, y, 0xFFFF00); y += lineH;
+        minecraftFont.drawShadow("[F11] Disconnect", x, y, 0xFF5555); y += lineH;
+        minecraftFont.drawShadow("[F] Spawn Mob", x, y, 0x00FF00); y += lineH;
+        minecraftFont.drawShadow("[R] Reset Pos", x, y, 0x00FF00);
+    }
+    
     private void updateFps() {
         currentFps++;
         if (System.currentTimeMillis() - lastFpsTime >= 1000) {
@@ -494,6 +658,9 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     }
 
     public void render(float a) {
+        GL11.glClearColor(0.5f, 0.8f, 1.0f, 1.0f);
+        GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+        
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
         GL11.glColor3f(1.0f, 1.0f, 1.0f);
         GL11.glMatrixMode(GL11.GL_PROJECTION);
@@ -508,11 +675,15 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         for (Mob mob : mobs) {
             mob.render(a);
         }
-        
+
         if (needsRenderUpdate && pendingLevel != null) {
             this.level = pendingLevel;
             this.renderer = new Renderer(pendingLevel, player);
             this.player.setLevel(pendingLevel);
+            this.player.setPosition(level.width / 2f, level.height / 2f + 2, level.depth / 2f);
+            if (particleEngine != null) {
+                particleEngine = new ParticleEngine(pendingLevel);
+            }
             pendingLevel = null;
             needsRenderUpdate = false;
             GameLogger.log("=== LEVEL APPLIED ===");
@@ -522,6 +693,7 @@ public class ReplaceCraft implements Runnable, NetworkListener {
 
         if (isMultiplayer && !remotePlayers.isEmpty()) {
             for (PlayerEntity entity : remotePlayers.values()) {
+                entity.setTexture(charTextureID); // Можно установить один раз при создании
                 entity.render(minecraftFont, player.yRot);
             }
         }
@@ -548,23 +720,22 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         GL11.glScalef(2.0f, 2.0f, 1.0f);
 
         if (minecraftFont != null) {
-            minecraftFont.drawShadow("0.0.11a (rc-0.1c)", 4, 4, 0xFFFFFF);
+            minecraftFont.drawShadow("0.0.11a (rc-0.2c)", 4, 4, 0xFFFFFF);
             minecraftFont.drawShadow(fpsDisplayString, 4, 14, 0xFFFFFF);
             if (isMultiplayer && network.isConnected()) {
-                minecraftFont.drawShadow("Server: " + serverIp + ":" + serverPort, 4, 24, 0x55FF55);
+                // Название сервера (обрезанное до 16 символов)
+                String serverDisplayName = serverName;
+                if (serverDisplayName != null && serverDisplayName.length() > 32) {
+                    serverDisplayName = serverDisplayName.substring(0, 32);
+                }
+                if (serverDisplayName != null && !serverDisplayName.isEmpty()) {
+                    minecraftFont.drawShadow(serverDisplayName, 4, 24, 0xFFAA00);
+                }
+                // IP:Port
+                minecraftFont.drawShadow("Server: " + serverIp + ":" + serverPort, 4, 34, 0x55FF55);
             }
-            if (showDebugMenu) {
-                int y = 44;
-                minecraftFont.drawShadow("=== DEBUG ===", 4, y, 0xFFFF00); y += 12;
-                minecraftFont.drawShadow("[F1] Fly: " + (player.flyMode ? "ON" : "OFF"), 4, y, 0x00FF00); y += 12;
-                minecraftFont.drawShadow("[F2] NoClip: " + (player.noClipMode ? "ON" : "OFF"), 4, y, 0x00FF00); y += 12;
-                minecraftFont.drawShadow("[F3] Fullscreen: " + (fullscreen ? "ON" : "OFF"), 4, y, 0x00FF00); y += 12;
-                minecraftFont.drawShadow("[F5] Save", 4, y, 0x00FFFF); y += 12;
-                minecraftFont.drawShadow("[F7] Spawn Mobs: " + (mobsSpawned ? "ON" : "OFF"), 4, y, 0x00FFFF); y += 12;
-                minecraftFont.drawShadow("[F9] Load", 4, y, 0x00FFFF); y += 12;
-                minecraftFont.drawShadow("[F10] Server", 4, y, 0xFFFF00); y += 12;
-                minecraftFont.drawShadow("[F11] Disconnect", 4, y, 0xFF5555);
-            }
+
+            renderDebugMenu();
 
             if (disconnectReason != null) {
                 long elapsed = System.currentTimeMillis() - disconnectMessageTime;
@@ -592,11 +763,14 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         }
         GL11.glPopMatrix();
 
-     // Чат
+        if (tabMenu != null) {
+            tabMenu.render();
+        }
+        // Чат
         if (chat != null) {
             chat.render(Display.getWidth(), Display.getHeight());
         }
-        
+
         if (settingsMenu != null && settingsMenu.isVisible()) {
             settingsMenu.render();
         }
@@ -628,6 +802,13 @@ public class ReplaceCraft implements Runnable, NetworkListener {
         if (serverGui != null) serverGui.render();
     }
 
+    public void onLightingChanged() {
+        if (renderer != null) {
+            renderer.allChunksChanged();
+        }
+    }
+    
+    
     private void drawSelectionBox() {
         Player.HitResult hit = player.rayTrace(5.0F);
         if (hit != null) {
@@ -672,6 +853,7 @@ public class ReplaceCraft implements Runnable, NetworkListener {
     public void destroy() {
         if (network != null) network.disconnect();
         GameLogger.close();
+        DiscordRPC.stop();
         Keyboard.destroy();
         Mouse.destroy();
         Display.destroy();

@@ -59,14 +59,14 @@ public class BlockGuiRenderer {
             // Обычный блок — ПРАВИЛЬНЫЕ UV-координаты
             int texTop = 2, texBottom = 2, texSide = 2;
 
-            if (type == 3)      { texTop = 0;  texBottom = 2; texSide = 3; }  // Трава
+            if (type == 3)      { texTop = 0;  texBottom = 0; texSide = 3; }  // Трава
             else if (type == 2) { texTop = 2;  texBottom = 2; texSide = 2; }  // Земля
             else if (type == 1) { texTop = 1;  texBottom = 1; texSide = 1; }  // Камень
             else if (type == 4) { texTop = 4;  texBottom = 4; texSide = 4; }  // Доски
             else if (type == 5) { texTop = 14; texBottom = 17; texSide = 14; } // Дерево (бревно)
             else if (type == 6) { texTop = 13; texBottom = 13; texSide = 13; } // Листва
             else if (type == 8) { texTop = 16; texBottom = 16; texSide = 16; } // Cobblestone
-
+            else if (type == 9) { texTop = 0; texBottom = 0; texSide = 0; } // FullGrass
             
             // Вычисляем UV для каждой текстуры
             float uTop0 = (texTop % 16) / 16.0f;

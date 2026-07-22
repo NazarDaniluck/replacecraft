@@ -3,7 +3,7 @@ package net.replacecraft;
 import org.lwjgl.opengl.GL11;
 
 public class BlockInventory {
-	public static final int[] BLOCKS = {3, 2, 1, 4, 5, 6, 7, 8};
+	public static final int[] BLOCKS = {3, 2, 1, 4, 5, 6, 7, 8, 9, 10};
 	public static final int SLOTS = BLOCKS.length;    
 	private int selected = 0;
     private boolean visible = false;
@@ -132,6 +132,7 @@ public class BlockInventory {
             case 6: return "Leaves";
             case 7: return "Sapling";
             case 8: return "Cobblestone";
+            case 9: return "FullGrass";
             default: return "Block";
         }
     }

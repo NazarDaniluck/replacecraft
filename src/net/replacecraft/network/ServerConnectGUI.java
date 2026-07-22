@@ -23,9 +23,10 @@ public class ServerConnectGUI {
         void onConnect(String ip, int port, String name);
     }
     
-    public ServerConnectGUI(Object font) {
+    public ServerConnectGUI(Object font, String defaultName) {
         this.fontRef = font;
         this.hasFont = (font != null);
+        this.nameInput = (defaultName != null && !defaultName.isEmpty()) ? defaultName : "Player";
     }
     
     public void setCallback(ConnectCallback callback) {

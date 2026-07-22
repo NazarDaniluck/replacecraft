@@ -40,7 +40,7 @@ public class Player {
         while (startY > 0 && level.getBlock((int)startX, (int)startY, (int)startZ) == 0) {
             startY--;
         }
-        startY += 2.0F; // Встаем чуть выше травы
+        startY += 6.0F; // Встаем чуть выше травы
         
         this.x0 = startX - width / 2.0F;
         this.y0 = startY;
@@ -76,7 +76,7 @@ public class Player {
         if (Keyboard.isKeyDown(Keyboard.KEY_R)) {
             this.resetPos();
         }
-
+        
         if (Keyboard.isKeyDown(Keyboard.KEY_UP) || Keyboard.isKeyDown(Keyboard.KEY_W)) {
             --ya;
         }

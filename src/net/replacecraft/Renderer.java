@@ -91,6 +91,8 @@ public class Renderer implements LevelListener {
         }
     }
     
+    
+    
     public int getTextureID() {
         return this.textureID;
     }
@@ -98,7 +100,7 @@ public class Renderer implements LevelListener {
     @Override
     public void allChunksChanged() {
         for (Chunk chunk : chunks) {
-            chunk.setDirty();
+            chunk.forceDirty();
         }
     }
     
