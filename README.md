@@ -1,6 +1,6 @@
 # 🧊 ReplaceCraft
 
-> **Minecraft Classic, переписанный на Java 5.0 (1.5) с OpenGL 1.1 с помощью нейросетей.**
+> **Minecraft Classic, переписанный на Java 1.8 с OpenGL 1.1 с помощью нейросетей.**
 
 [![Java Version](https://img.shields.io/badge/Java-1.8-blue.svg)](https://www.oracle.com/java/technologies/javase/javase8-archive-downloads.html)
 [![OpenGL](https://img.shields.io/badge/OpenGL-1.1-green.svg)](https://www.opengl.org/)
